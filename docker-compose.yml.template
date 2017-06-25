@@ -1,0 +1,19 @@
+version: '3'
+services:
+  exampleup:
+    image: 127.0.0.1:5000/markwatsonatx/exampleup:latest
+    privileged: true
+    volumes:
+      - $volumeName:/var/lib/docker
+    ports:
+      - "$logPort"
+      - "$editorPort"
+      - "$proxyPort"
+    environment:
+      - EXUP_ALLOW_ORIGIN=$allowOrigin
+      - EXUP_LOG_PORT=$logPort
+      - EXUP_EDITOR_PORT=$editorPort
+      - EXUP_PROXY_PORT=$proxyPort
+      - EXUP_GIT_REPO=$gitRepo
+volumes:
+  $volumeName:

@@ -3,5 +3,6 @@
 .idea
 *.iml
 *.pyc
+docker-compose*.yml
 venv
 venv3
