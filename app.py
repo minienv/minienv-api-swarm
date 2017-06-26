@@ -42,14 +42,28 @@ def up():
         abort(400)
         return
     # download exampleup.json file
-    response = urllib2.urlopen('{}/raw/master/exampleup.json'.format(up_request['repo']))
     exampleup_dict = {}
-    exampleup_json = response.read()
+    exampleup_json = None
+    try:
+        response = urllib2.urlopen('{}/raw/master/exampleup.json'.format(up_request['repo']))
+        exampleup_json = response.read()
+    except:
+        print('Error downloading exampleup.json')
     if exampleup_json is not None and len(exampleup_json) > 0:
         exampleup_dict = json.loads(exampleup_json)
-    # download docker-compose file
-    response = urllib2.urlopen('{}/raw/master/docker-compose.yml'.format(up_request['repo']))
-    docker_compose_yaml = response.read()
+    # download docker-compose file (first try yml, then yaml)
+    docker_compose_yaml = None
+    try:
+        response = urllib2.urlopen('{}/raw/master/docker-compose.yml'.format(up_request['repo']))
+        docker_compose_yaml = response.read()
+    except:
+        print('Error downloading docker-compose.yml')
+    if docker_compose_yaml is None or len(docker_compose_yaml) == 0:
+        try:
+            response = urllib2.urlopen('{}/raw/master/docker-compose.yaml'.format(up_request['repo']))
+            docker_compose_yaml = response.read()
+        except:
+            print('Error downloading docker-compose.yaml')
     if docker_compose_yaml is None or len(docker_compose_yaml) == 0:
         abort(400)
         return
