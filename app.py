@@ -1,5 +1,6 @@
 import json
 import os
+import urllib
 import urllib2
 import yaml
 from docker_compose import get_project, ps_
@@ -82,7 +83,11 @@ def up():
     up_response['logUrl'] = details['logUrl']
     up_response['editorUrl'] = details['editorUrl']
     up_response['tabs'] = details['tabs']
-    print(json.dumps(up_response))
+    deployments[up_request['userId']] = {
+        'userId': up_request['userId'],
+        'upRequest': up_request,
+        'upResponse': up_response
+    }
     return jsonify(up_response)
 
 
@@ -95,11 +100,25 @@ def ping():
         abort(400)
         return jsonify(ping_response)
     if 'userId' in ping_request.keys() and ping_request['userId'] in deployments.keys():
+        user_id = ping_request['userId']
+        deployment = deployments[user_id]
         ping_response['up'] = True
         if 'getUpDetails' in ping_request.keys() and ping_request['getUpDetails']:
-            # TODO get details here
-            pass
+            # make sure to check if it is really running
+            exists = is_example_deployed(user_id)
+            if exists:
+                ping_response['upDetails'] = deployment['upResponse']
+            else:
+                deployments.pop(user_id, None)
     return jsonify(ping_response)
+
+
+def is_example_deployed(user_id):
+    project_name = get_project_name(user_id)
+    project_file_name = './docker-compose-{}.yml'.format(project_name)
+    project = get_project('./', project_name, project_file_name)
+    ps = ps_(project)
+    return is_project_running(ps)
 
 
 def get_up_details(ps, docker_compose_dict, exampleup_dict):
@@ -118,19 +137,19 @@ def get_up_details(ps, docker_compose_dict, exampleup_dict):
                 elif port_str == DEFAULT_EDITOR_PORT:
                     details['editorPort'] = host_port
                     details['editorUrl'] = 'http://{}:{}'.format(nodeHostName, host_port)
+                    if 'editor' in exampleup_dict.keys():
+                        editor = exampleup_dict['editor']
+                        if 'hide' in editor.keys() and editor['hide']:
+                            details['editorPort'] = 0
+                            details['editorUrl'] = ''
+                        elif 'srcDir' in editor.keys() and len(editor['srcDir']) > 0:
+                            details['editorUrl'] = '{}?src={}'.format(details['editorUrl'], urllib.quote(editor['srcDir']))
                 elif port_str == DEFAULT_PROXY_PORT:
                     details['proxyPort'] = host_port
-
-    # if exampleupConfig.Editor != nil {
-    # if exampleupConfig.Editor.Hide {
-    # details.EditorPort = 0
-    # details.EditorUrl = ""
-    # } else if exampleupConfig.Editor.SrcDir != "" {
-    # details.EditorUrl += "?src=" + url.QueryEscape(exampleupConfig.Editor.SrcDir)
-    # }
-    # }
-
-    print(exampleup_dict)
+    proxy_ports = []
+    if 'proxy' in exampleup_dict.keys():
+        if 'ports' in exampleup_dict['proxy'].keys():
+            proxy_ports = exampleup_dict['proxy']['ports']
     if 'services' in docker_compose_dict.keys():
         services = docker_compose_dict['services']
         for key in services.keys():
@@ -138,12 +157,42 @@ def get_up_details(ps, docker_compose_dict, exampleup_dict):
                 ports = services[key]['ports']
                 if ports is not None and len(ports) > 0:
                     for port_str in ports:
-                        port = port_str[0:port_str.index(':')]
-                        tabs.append({'port': int(port), 'name': port, 'path': ''})
+                        tab_port_str = port_str[0:port_str.index(':')]
+                        tab_port = int(tab_port_str)
+                        tab = {'port': tab_port, 'name': tab_port_str, 'path': ''}
+                        extra_tabs = []
+                        hide_tab = False
+                        for proxy_port in proxy_ports:
+                            if 'port' in proxy_port.keys() and proxy_port['port'] == tab_port:
+                                if 'hide' in proxy_port.keys() and proxy_port['hide']:
+                                    hide_tab = True
+                                    break
+                                if 'tabs' in proxy_port.keys() and len(proxy_port['tabs']) > 0:
+                                    for i, proxy_tab in enumerate(proxy_port['tabs']):
+                                        if i == 0:
+                                            if 'name' in proxy_tab.keys():
+                                                tab['name'] = proxy_tab['name']
+                                            if 'path' in proxy_port.keys():
+                                                tab['path'] = proxy_port['path']
+                                        else:
+                                            extra_tab = {'port': tab_port, 'name': tab_port_str, 'path': ''}
+                                            if 'name' in proxy_tab.keys():
+                                                extra_tab['name'] = proxy_tab['name']
+                                            if 'path' in proxy_port.keys():
+                                                extra_tab['path'] = proxy_port['path']
+                                            extra_tabs.append(extra_tab)
+                                else:
+                                    if 'name' in proxy_port.keys():
+                                        tab['name'] = proxy_port['name']
+                                    if 'path' in proxy_port.keys():
+                                        tab['path'] = proxy_port['path']
+                        if not hide_tab:
+                            tabs.append(tab)
+                            if len(extra_tabs) > 0:
+                                tabs.extend(extra_tabs)
     for tab in tabs:
         tab['url'] = 'http://{}.{}:{}{}'.format(tab['port'], nodeHostName, details['proxyPort'], tab['path'])
     details['tabs'] = tabs
-    print(json.dumps(details))
     return details
 
 
