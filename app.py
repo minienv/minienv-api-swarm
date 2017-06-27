@@ -41,16 +41,16 @@ def up():
     if up_request is None:
         abort(400)
         return
-    # download exampleup.json file
-    exampleup_dict = {}
-    exampleup_json = None
+    # download minienv.json file
+    minienv_dict = {}
+    minienv_json = None
     try:
-        response = urllib2.urlopen('{}/raw/master/exampleup.json'.format(up_request['repo']))
-        exampleup_json = response.read()
+        response = urllib2.urlopen('{}/raw/master/minienv.json'.format(up_request['repo']))
+        minienv_json = response.read()
     except:
-        print('Error downloading exampleup.json')
-    if exampleup_json is not None and len(exampleup_json) > 0:
-        exampleup_dict = json.loads(exampleup_json)
+        print('Error downloading minienv.json')
+    if minienv_json is not None and len(minienv_json) > 0:
+        minienv_dict = json.loads(minienv_json)
     # download docker-compose file (first try yml, then yaml)
     docker_compose_yaml = None
     try:
@@ -91,7 +91,7 @@ def up():
         project.down(2, True, remove_orphans=True)
     project.up()
     ps = ps_(project)
-    details = get_up_details(ps, docker_compose_dict, exampleup_dict)
+    details = get_up_details(ps, docker_compose_dict, minienv_dict)
     up_response['repo'] = up_request['repo']
     up_response['deployToBluemix'] = False # TODO:
     up_response['logUrl'] = details['logUrl']
@@ -135,7 +135,7 @@ def is_example_deployed(user_id):
     return is_project_running(ps)
 
 
-def get_up_details(ps, docker_compose_dict, exampleup_dict):
+def get_up_details(ps, docker_compose_dict, minienv_dict):
     details = {'nodeHostName': nodeHostName}
     tabs = []
     if len(ps) > 0 and 'ports' in ps[0].keys():
@@ -151,8 +151,8 @@ def get_up_details(ps, docker_compose_dict, exampleup_dict):
                 elif port_str == DEFAULT_EDITOR_PORT:
                     details['editorPort'] = host_port
                     details['editorUrl'] = 'http://{}:{}'.format(nodeHostName, host_port)
-                    if 'editor' in exampleup_dict.keys():
-                        editor = exampleup_dict['editor']
+                    if 'editor' in minienv_dict.keys():
+                        editor = minienv_dict['editor']
                         if 'hide' in editor.keys() and editor['hide']:
                             details['editorPort'] = 0
                             details['editorUrl'] = ''
@@ -161,9 +161,9 @@ def get_up_details(ps, docker_compose_dict, exampleup_dict):
                 elif port_str == DEFAULT_PROXY_PORT:
                     details['proxyPort'] = host_port
     proxy_ports = []
-    if 'proxy' in exampleup_dict.keys():
-        if 'ports' in exampleup_dict['proxy'].keys():
-            proxy_ports = exampleup_dict['proxy']['ports']
+    if 'proxy' in minienv_dict.keys():
+        if 'ports' in minienv_dict['proxy'].keys():
+            proxy_ports = minienv_dict['proxy']['ports']
     if 'services' in docker_compose_dict.keys():
         services = docker_compose_dict['services']
         for key in services.keys():
