@@ -1,7 +1,7 @@
 version: '3'
 services:
   minienv:
-    image: 127.0.0.1:5000/markwatsonatx/minienv:latest
+    image: 127.0.0.1:5000/minienv/minienv:latest
     privileged: true
     volumes:
       - $volumeName:/var/lib/docker
@@ -10,10 +10,10 @@ services:
       - "$editorPort"
       - "$proxyPort"
     environment:
-      - EXUP_ALLOW_ORIGIN=$allowOrigin
-      - EXUP_LOG_PORT=$logPort
-      - EXUP_EDITOR_PORT=$editorPort
-      - EXUP_PROXY_PORT=$proxyPort
-      - EXUP_GIT_REPO=$gitRepo
+      - MINIENV_ALLOW_ORIGIN=$allowOrigin
+      - MINIENV_LOG_PORT=$logPort
+      - MINIENV_EDITOR_PORT=$editorPort
+      - MINIENV_PROXY_PORT=$proxyPort
+      - MINIENV_GIT_REPO=$gitRepo
 volumes:
   $volumeName:

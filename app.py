@@ -9,8 +9,8 @@ from gevent import pywsgi
 
 # global vars
 app = Flask(__name__)
-allowOrigin = os.environ.get('EXUP_ALLOW_ORIGIN')
-nodeHostName = os.environ.get('EXUP_NODE_HOST_NAME')
+allowOrigin = os.environ.get('MINIENV_ALLOW_ORIGIN')
+nodeHostName = os.environ.get('MINIENV_NODE_HOST_NAME')
 deployments = {}
 
 VAR_LOG_PORT = "$logPort"
