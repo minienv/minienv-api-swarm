@@ -2,6 +2,7 @@ import json
 import os
 import urllib
 import urllib2
+import uuid
 import yaml
 from docker_compose import get_project, ps_
 from flask import Flask, jsonify, request, abort
@@ -11,7 +12,8 @@ from gevent import pywsgi
 app = Flask(__name__)
 allowOrigin = os.environ.get('MINIENV_ALLOW_ORIGIN')
 nodeHostName = os.environ.get('MINIENV_NODE_HOST_NAME')
-deployments = {}
+environments = {}
+max_environments = 2
 
 VAR_LOG_PORT = "$logPort"
 VAR_EDITOR_PORT = "$editorPort"
@@ -34,6 +36,53 @@ def add_header(r):
     return r
 
 
+@app.route('/api/claim', methods=['POST'])
+def claim():
+    # if body is None throw error
+    claim_response = {}
+    claim_request = request.get_json()
+    if claim_request is None:
+        abort(400)
+        return
+    if len(environments) >= max_environments:
+        # max environment exceeded - do not grant claim
+        claim_response['claimGranted'] = False
+        claim_response['message'] = 'No more claims available'
+    else:
+        claim_response['claimGranted'] = True
+        claim_response['claimToken'] = str(uuid.uuid4())
+        claim_response['claimId'] = str(len(environments) + 1)
+        environment = {'claimId': claim_response['claimId'], 'claimToken': claim_response['claimToken']}
+        environments[claim_response['claimToken']] = environment
+    return jsonify(claim_response)
+
+
+@app.route('/api/ping', methods=['POST'])
+def ping():
+    # if body is None throw error
+    ping_response = {}
+    ping_request = request.get_json()
+    if ping_request is None:
+        abort(400)
+        return jsonify(ping_response)
+    if 'claimToken' in ping_request.keys() and ping_request['claimToken'] in environments.keys():
+        environment = environments[ping_request['claimToken']]
+        ping_response['claimGranted'] = True
+        ping_response['up'] = 'upRequest' in environment.keys() and 'upResponse' in environment.keys()
+        if ping_response['up'] and 'getUpDetails' in ping_request.keys() and ping_request['getUpDetails']:
+            # make sure to check if it is really running
+            exists = is_example_deployed(environment['claimId'])
+            if exists:
+                ping_response['upDetails'] = environment['upResponse']
+            else:
+                environment.pop('upRequest', None)
+                environment.pop('upResponse', None)
+    else:
+        ping_response['claimGranted'] = False
+        ping_response['up'] = False
+    return jsonify(ping_response)
+
+
 @app.route('/api/up', methods=['POST'])
 def up():
     up_request = request.get_json()
@@ -41,6 +90,11 @@ def up():
     if up_request is None:
         abort(400)
         return
+    if up_request['claimToken'] not in environments.keys():
+        print("Up request failed; claim no longer valid.")
+        abort(401)
+        return
+    environment = environments[up_request['claimToken']]
     # download minienv.json file
     minienv_dict = {}
     minienv_json = None
@@ -69,8 +123,8 @@ def up():
         return
     docker_compose_dict = yaml.safe_load(docker_compose_yaml)
     # run using docker-compose
-    project_name = get_project_name(up_request['userId'])
-    volume_name = get_volume_name(up_request['userId'])
+    project_name = get_project_name(environment['claimId'])
+    volume_name = get_volume_name(environment['claimId'])
     src_file_name = './docker-compose.yml.template'
     dest_file_name = './docker-compose-{}.yml'.format(project_name)
     src_file = open(src_file_name, 'r')
@@ -97,34 +151,9 @@ def up():
     up_response['logUrl'] = details['logUrl']
     up_response['editorUrl'] = details['editorUrl']
     up_response['tabs'] = details['tabs']
-    deployments[up_request['userId']] = {
-        'userId': up_request['userId'],
-        'upRequest': up_request,
-        'upResponse': up_response
-    }
+    environment['upRequest'] = up_request
+    environment['upResponse'] = up_response
     return jsonify(up_response)
-
-
-@app.route('/api/ping', methods=['POST'])
-def ping():
-    # if body is None throw error
-    ping_response = {'up': False}
-    ping_request = request.get_json()
-    if ping_request is None:
-        abort(400)
-        return jsonify(ping_response)
-    if 'userId' in ping_request.keys() and ping_request['userId'] in deployments.keys():
-        user_id = ping_request['userId']
-        deployment = deployments[user_id]
-        ping_response['up'] = True
-        if 'getUpDetails' in ping_request.keys() and ping_request['getUpDetails']:
-            # make sure to check if it is really running
-            exists = is_example_deployed(user_id)
-            if exists:
-                ping_response['upDetails'] = deployment['upResponse']
-            else:
-                deployments.pop(user_id, None)
-    return jsonify(ping_response)
 
 
 def is_example_deployed(user_id):
