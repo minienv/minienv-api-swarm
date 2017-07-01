@@ -1,17 +1,29 @@
 import json
 import os
+import os.path
+import time
 import urllib
 import urllib2
+import uuid
 import yaml
 from docker_compose import get_project, ps_
 from flask import Flask, jsonify, request, abort
 from gevent import pywsgi
+from threading import Timer
 
 # global vars
 app = Flask(__name__)
 allowOrigin = os.environ.get('MINIENV_ALLOW_ORIGIN')
 nodeHostName = os.environ.get('MINIENV_NODE_HOST_NAME')
-deployments = {}
+environments = []
+
+STATUS_IDLE = 0
+STATUS_PROVISIONING = 1
+STATUS_CLAIMED = 2
+STATUS_RUNNING = 3
+
+CHECK_ENV_TIMER_SECONDS = 15
+DELETE_ENV_NO_ACIVITY_SECONDS = 60
 
 VAR_LOG_PORT = "$logPort"
 VAR_EDITOR_PORT = "$editorPort"
@@ -34,14 +46,105 @@ def add_header(r):
     return r
 
 
+@app.route('/api/claim', methods=['POST'])
+def claim():
+    # if body is None throw error
+    claim_request = request.get_json()
+    if claim_request is None:
+        abort(400)
+        return
+    claim_response = {}
+    environment = None
+    for element in environments:
+        if element['status'] == STATUS_IDLE:
+            environment = element
+            break
+    if environment is None:
+        print('No more claims available.')
+        claim_response['claimGranted'] = False
+        claim_response['message'] = 'No more claims available'
+    else:
+        print('Claimed environment {}.'.format(environment['id']))
+        claim_response['claimGranted'] = True
+        claim_response['claimToken'] = str(uuid.uuid4())
+        environment['claimToken'] = claim_response['claimToken']
+        environment['status'] = STATUS_CLAIMED
+        environment['lastActivity'] = time.time()
+    return jsonify(claim_response)
+
+
+@app.route('/api/ping', methods=['POST'])
+def ping():
+    # if body is None throw error
+    ping_request = request.get_json()
+    if ping_request is None:
+        abort(400)
+        return
+    ping_response = {}
+    environment = None
+    for element in environments:
+        if element['claimToken'] == ping_request['claimToken']:
+            environment = element
+            break
+    if environment is None:
+        ping_response['claimGranted'] = False
+        ping_response['up'] = False
+    else:
+        environment['lastActivity'] = time.time()
+        ping_response['claimGranted'] = True
+        ping_response['up'] = environment['status'] == STATUS_RUNNING
+        if ping_response['up'] and 'getUpDetails' in ping_request.keys() and ping_request['getUpDetails']:
+            # make sure to check if it is really running
+            exists = is_example_deployed(environment['id'])
+            ping_response['up'] = exists
+            if exists:
+                ping_response['upDetails'] = environment['upResponse']
+            else:
+                environment.pop('upRequest', None)
+                environment.pop('upResponse', None)
+    return jsonify(ping_response)
+
+
 @app.route('/api/up', methods=['POST'])
 def up():
     up_request = request.get_json()
-    up_response = {'up': False}
     if up_request is None:
         abort(400)
         return
-    # download minienv.json file
+    environment = None
+    for element in environments:
+        if element['claimToken'] == up_request['claimToken']:
+            environment = element
+            break
+    if environment is None:
+        print("Up request failed; claim no longer valid.")
+        abort(401)
+        return
+    else:
+        up_response = None
+        # download minienv.json file
+        print('Checking if deployment exists for env {}...'.format(environment['id']))
+        if is_example_deployed(environment['id']):
+            print('Example deployed for claim {}.'.format(environment['id']))
+            if environment['status'] == STATUS_RUNNING and up_request['repo'] == environment['upRequest']['repo']:
+                print('Returning existing environment details...')
+                up_response = environment['upResponse']
+        if up_response is None:
+            print('Creating new deployment...')
+            details = deploy_example(up_request, environment)
+            up_response = {}
+            up_response['repo'] = up_request['repo']
+            up_response['deployToBluemix'] = False # TODO: want to move this to README anyway
+            up_response['logUrl'] = details['logUrl']
+            up_response['editorUrl'] = details['editorUrl']
+            up_response['tabs'] = details['tabs']
+            environment['status'] = STATUS_RUNNING
+            environment['upRequest'] = up_request
+            environment['upResponse'] = up_response
+        return jsonify(up_response)
+
+
+def deploy_example(up_request, environment):
     minienv_dict = {}
     minienv_json = None
     try:
@@ -69,8 +172,8 @@ def up():
         return
     docker_compose_dict = yaml.safe_load(docker_compose_yaml)
     # run using docker-compose
-    project_name = get_project_name(up_request['userId'])
-    volume_name = get_volume_name(up_request['userId'])
+    project_name = get_project_name(environment['id'])
+    volume_name = get_volume_name(environment['id'])
     src_file_name = './docker-compose.yml.template'
     dest_file_name = './docker-compose-{}.yml'.format(project_name)
     src_file = open(src_file_name, 'r')
@@ -91,48 +194,24 @@ def up():
         project.down(2, True, remove_orphans=True)
     project.up()
     ps = ps_(project)
-    details = get_up_details(ps, docker_compose_dict, minienv_dict)
-    up_response['repo'] = up_request['repo']
-    up_response['deployToBluemix'] = False # TODO:
-    up_response['logUrl'] = details['logUrl']
-    up_response['editorUrl'] = details['editorUrl']
-    up_response['tabs'] = details['tabs']
-    deployments[up_request['userId']] = {
-        'userId': up_request['userId'],
-        'upRequest': up_request,
-        'upResponse': up_response
-    }
-    return jsonify(up_response)
+    return get_up_details(ps, docker_compose_dict, minienv_dict)
 
 
-@app.route('/api/ping', methods=['POST'])
-def ping():
-    # if body is None throw error
-    ping_response = {'up': False}
-    ping_request = request.get_json()
-    if ping_request is None:
-        abort(400)
-        return jsonify(ping_response)
-    if 'userId' in ping_request.keys() and ping_request['userId'] in deployments.keys():
-        user_id = ping_request['userId']
-        deployment = deployments[user_id]
-        ping_response['up'] = True
-        if 'getUpDetails' in ping_request.keys() and ping_request['getUpDetails']:
-            # make sure to check if it is really running
-            exists = is_example_deployed(user_id)
-            if exists:
-                ping_response['upDetails'] = deployment['upResponse']
-            else:
-                deployments.pop(user_id, None)
-    return jsonify(ping_response)
+def is_example_deployed(env_id):
+    project_name = get_project_name(env_id)
+    project_file_name = './docker-compose-{}.yml'.format(project_name)
+    # TODO: should check if running or starting up
+    return os.path.isfile(project_file_name)
 
 
-def is_example_deployed(user_id):
-    project_name = get_project_name(user_id)
+def delete_example(env_id):
+    project_name = get_project_name(env_id)
     project_file_name = './docker-compose-{}.yml'.format(project_name)
     project = get_project('./', project_name, project_file_name)
     ps = ps_(project)
-    return is_project_running(ps)
+    if is_project_running(ps):
+        project.down(2, True, remove_orphans=True)
+    os.remove(project_file_name)
 
 
 def get_up_details(ps, docker_compose_dict, minienv_dict):
@@ -217,16 +296,88 @@ def is_project_running(ps):
         return ps[0]['is_running']
 
 
-def get_project_name(user_id):
-    return 'u-{}'.format(user_id.lower())
+def get_project_name(env_id):
+    return 'env-{}'.format(env_id.lower())
 
 
-def get_volume_name(user_id):
-    return 'u-{}-volume'.format(user_id.lower())
+def get_volume_name(env_id):
+    return 'env-{}-volume'.format(env_id.lower())
+
+
+def is_provisioner_running(env_id):
+    # TODO: not implemented
+    return False
+
+
+def init_environments(env_count):
+    print('Provisioning {} environments...'.format(env_count))
+    for i in range(0, env_count):
+        environment = {
+            'id': str(i + 1),
+            'claimToken': '',
+            'upRequest': None,
+            'upResponse': None,
+            'lastActivity': 0
+        }
+        environments.append(environment)
+        # check if environment running
+        if is_example_deployed(environment['id']):
+            print('Loading running environment {}...'.format(environment['id']))
+            environment['status'] = STATUS_RUNNING
+            # TODO: environment.ClaimToken =
+            environment['lastActivity'] = time.time()
+            # TODO: environment.UpRequest = ???
+            # TODO: environment.UpResponse = ???
+        else:
+            print('Provisioning environment {}...'.format(environment['id']))
+            environment['status'] = STATUS_IDLE
+            # TODO: support provisioner
+            #environment['status'] = STATUS_PROVISIONING
+            #deployProvisioner(environment['id'], storageDriver, examplePvTemplate, examplePvcTemplate, provisionerJobTemplate, kubeServiceToken, kubeServiceBaseUrl, kubeNamespace)
+    start_environment_check_timer()
+
+
+def start_environment_check_timer():
+    t = Timer(CHECK_ENV_TIMER_SECONDS, check_environments)
+    t.start()
+
+
+def check_environments():
+    for environment in environments:
+        print('Checking environment {}; current status={}'.format(environment['id'], environment['status']))
+        if environment['status'] == STATUS_PROVISIONING:
+            # TODO: not supported yet
+            if not is_provisioner_running(environment['id']):
+                print('Environment {} provisioning complete.'.format(environment['id']))
+                environment['status'] = STATUS_IDLE
+                # deleteProvisioner(environment['id'], kubeServiceToken, kubeServiceBaseUrl, kubeNamespace)
+            else:
+                print('Environment {} still provisioning...'.format(environment['id']))
+        elif environment['status'] == STATUS_RUNNING:
+            if time.time() - environment['lastActivity'] > DELETE_ENV_NO_ACIVITY_SECONDS:
+                print('Environment {} no longer active.'.format(environment['id']))
+                environment['status'] = STATUS_IDLE
+                environment['claimToken'] = ''
+                environment['upRequest'] = None
+                environment['upResponse'] = None
+                environment['lastActivity'] = 0
+                delete_example(environment['id'])
+            else:
+                print('Checking if environment {} is still deployed...'.format(environment['id']))
+                if not is_example_deployed(environment['id']):
+                    print('Environment {} no longer deployed.'.format(environment['id']))
+                    environment['status'] = STATUS_IDLE
+                    environment['claimToken'] = ''
+                    environment['upRequest'] = None
+                    environment['upResponse'] = None
+                    environment['lastActivity'] = 0
+    start_environment_check_timer()
 
 if __name__ == '__main__':
     try:
         port = int(os.getenv('PORT', 8080))
+        env_count = int(os.getenv('MINIENV_PROVISION_COUNT', 1))
+        init_environments(env_count)
         server = pywsgi.WSGIServer(('', port), app)
         server.serve_forever()
     except (KeyboardInterrupt, SystemExit):
