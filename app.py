@@ -93,15 +93,17 @@ def ping():
         environment['lastActivity'] = time.time()
         ping_response['claimGranted'] = True
         ping_response['up'] = environment['status'] == STATUS_RUNNING
-        if ping_response['up'] and 'getUpDetails' in ping_request.keys() and ping_request['getUpDetails']:
+        ping_response['repo'] = environment['repo']
+        if ping_response['up'] and 'getEnvDetails' in ping_request.keys() and ping_request['getEnvDetails']:
             # make sure to check if it is really running
             exists = is_example_deployed(environment['id'])
             ping_response['up'] = exists
             if exists:
-                ping_response['upDetails'] = environment['upResponse']
+                ping_response['envDetails'] = environment['details']
             else:
-                environment.pop('upRequest', None)
-                environment.pop('upResponse', None)
+                environment['status'] = STATUS_CLAIMED
+                environment['repo'] = None
+                environment['details'] = None
     return jsonify(ping_response)
 
 
@@ -126,21 +128,22 @@ def up():
         print('Checking if deployment exists for env {}...'.format(environment['id']))
         if is_example_deployed(environment['id']):
             print('Example deployed for claim {}.'.format(environment['id']))
-            if environment['status'] == STATUS_RUNNING and up_request['repo'] == environment['upRequest']['repo']:
+            if environment['status'] == STATUS_RUNNING and up_request['repo'] == environment['repo']:
                 print('Returning existing environment details...')
-                up_response = environment['upResponse']
+                up_response = environment['details']
         if up_response is None:
             print('Creating new deployment...')
             details = deploy_example(up_request, environment)
-            up_response = {}
-            up_response['repo'] = up_request['repo']
-            up_response['deployToBluemix'] = False # TODO: want to move this to README anyway
-            up_response['logUrl'] = details['logUrl']
-            up_response['editorUrl'] = details['editorUrl']
-            up_response['tabs'] = details['tabs']
+            up_response = {
+                'repo': up_request['repo'],
+                'deployToBluemix': False,
+                'logUrl': details['logUrl'],
+                'editorUrl': details['editorUrl'],
+                'tabs': details['tabs']
+            }
             environment['status'] = STATUS_RUNNING
-            environment['upRequest'] = up_request
-            environment['upResponse'] = up_response
+            environment['repo'] = up_request['repo']
+            environment['details'] = up_response
         return jsonify(up_response)
 
 
@@ -314,10 +317,11 @@ def init_environments(env_count):
     for i in range(0, env_count):
         environment = {
             'id': str(i + 1),
+            'status': STATUS_IDLE,
             'claimToken': '',
-            'upRequest': None,
+            'lastActivity': 0,
+            'repo': None,
             'upResponse': None,
-            'lastActivity': 0
         }
         environments.append(environment)
         # check if environment running
@@ -359,7 +363,7 @@ def check_environments():
                 environment['status'] = STATUS_IDLE
                 environment['claimToken'] = ''
                 environment['upRequest'] = None
-                environment['upResponse'] = None
+                environment['details'] = None
                 environment['lastActivity'] = 0
                 delete_example(environment['id'])
             else:
@@ -369,7 +373,7 @@ def check_environments():
                     environment['status'] = STATUS_IDLE
                     environment['claimToken'] = ''
                     environment['upRequest'] = None
-                    environment['upResponse'] = None
+                    environment['details'] = None
                     environment['lastActivity'] = 0
     start_environment_check_timer()
 
