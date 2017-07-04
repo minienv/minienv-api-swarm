@@ -24,6 +24,7 @@ STATUS_RUNNING = 3
 
 CHECK_ENV_TIMER_SECONDS = 15
 DELETE_ENV_NO_ACIVITY_SECONDS = 60
+EXPIRE_CLAIM_NO_ACIVITY_SECONDS = 30
 
 VAR_LOG_PORT = "$logPort"
 VAR_EDITOR_PORT = "$editorPort"
@@ -96,7 +97,7 @@ def ping():
         ping_response['repo'] = environment['repo']
         if ping_response['up'] and 'getEnvDetails' in ping_request.keys() and ping_request['getEnvDetails']:
             # make sure to check if it is really running
-            exists = is_example_deployed(environment['id'])
+            exists = is_env_deployed(environment['id'])
             ping_response['up'] = exists
             if exists:
                 ping_response['envDetails'] = environment['details']
@@ -126,14 +127,14 @@ def up():
         up_response = None
         # download minienv.json file
         print('Checking if deployment exists for env {}...'.format(environment['id']))
-        if is_example_deployed(environment['id']):
-            print('Example deployed for claim {}.'.format(environment['id']))
+        if is_env_deployed(environment['id']):
+            print('Env deployed for claim {}.'.format(environment['id']))
             if environment['status'] == STATUS_RUNNING and up_request['repo'] == environment['repo']:
                 print('Returning existing environment details...')
                 up_response = environment['details']
         if up_response is None:
             print('Creating new deployment...')
-            details = deploy_example(up_request, environment)
+            details = deploy_env(up_request, environment)
             up_response = {
                 'repo': up_request['repo'],
                 'deployToBluemix': False,
@@ -147,7 +148,7 @@ def up():
         return jsonify(up_response)
 
 
-def deploy_example(up_request, environment):
+def deploy_env(up_request, environment):
     minienv_dict = {}
     minienv_json = None
     try:
@@ -200,14 +201,14 @@ def deploy_example(up_request, environment):
     return get_up_details(ps, docker_compose_dict, minienv_dict)
 
 
-def is_example_deployed(env_id):
+def is_env_deployed(env_id):
     project_name = get_project_name(env_id)
     project_file_name = './docker-compose-{}.yml'.format(project_name)
     # TODO: should check if running or starting up
     return os.path.isfile(project_file_name)
 
 
-def delete_example(env_id):
+def delete_env(env_id):
     project_name = get_project_name(env_id)
     project_file_name = './docker-compose-{}.yml'.format(project_name)
     project = get_project('./', project_name, project_file_name)
@@ -325,7 +326,7 @@ def init_environments(env_count):
         }
         environments.append(environment)
         # check if environment running
-        if is_example_deployed(environment['id']):
+        if is_env_deployed(environment['id']):
             print('Loading running environment {}...'.format(environment['id']))
             environment['status'] = STATUS_RUNNING
             # TODO: environment.ClaimToken =
@@ -337,7 +338,7 @@ def init_environments(env_count):
             environment['status'] = STATUS_IDLE
             # TODO: support provisioner
             #environment['status'] = STATUS_PROVISIONING
-            #deployProvisioner(environment['id'], storageDriver, examplePvTemplate, examplePvcTemplate, provisionerJobTemplate, kubeServiceToken, kubeServiceBaseUrl, kubeNamespace)
+            #deployProvisioner(environment['id'], storageDriver, envPvTemplate, envPvcTemplate, provisionerJobTemplate, kubeServiceToken, kubeServiceBaseUrl, kubeNamespace)
     start_environment_check_timer()
 
 
@@ -362,19 +363,27 @@ def check_environments():
                 print('Environment {} no longer active.'.format(environment['id']))
                 environment['status'] = STATUS_IDLE
                 environment['claimToken'] = ''
+                environment['lastActivity'] = 0
                 environment['upRequest'] = None
                 environment['details'] = None
-                environment['lastActivity'] = 0
-                delete_example(environment['id'])
+                delete_env(environment['id'])
             else:
                 print('Checking if environment {} is still deployed...'.format(environment['id']))
-                if not is_example_deployed(environment['id']):
+                if not is_env_deployed(environment['id']):
                     print('Environment {} no longer deployed.'.format(environment['id']))
                     environment['status'] = STATUS_IDLE
                     environment['claimToken'] = ''
+                    environment['lastActivity'] = 0
                     environment['upRequest'] = None
                     environment['details'] = None
-                    environment['lastActivity'] = 0
+        elif environment['status'] == STATUS_CLAIMED:
+            if time.time() - environment['lastActivity'] > EXPIRE_CLAIM_NO_ACIVITY_SECONDS:
+                print('Environment {} claim expired.'.format(environment['id']))
+                environment['status'] = STATUS_IDLE
+                environment['claimToken'] = ''
+                environment['lastActivity'] = 0
+                environment['upRequest'] = None
+                environment['details'] = None
     start_environment_check_timer()
 
 if __name__ == '__main__':
