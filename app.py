@@ -61,9 +61,9 @@ def claim():
             environment = element
             break
     if environment is None:
-        print('No more claims available.')
+        print('Claim failed; no environments available.')
         claim_response['claimGranted'] = False
-        claim_response['message'] = 'No more claims available'
+        claim_response['message'] = 'No environments available'
     else:
         print('Claimed environment {}.'.format(environment['id']))
         claim_response['claimGranted'] = True
