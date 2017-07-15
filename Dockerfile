@@ -17,7 +17,8 @@ RUN apk add --no-cache bash \
   && venv/bin/pip install -r requirements.txt
 
 COPY app.py \
-     docker-compose.yml.template \
+     docker-compose-env.yml.template \
+     docker-compose-provision.yml.template \
      docker_compose.py \
      startup.sh /app/
 

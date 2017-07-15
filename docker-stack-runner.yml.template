@@ -1,0 +1,20 @@
+version: '3'
+services:
+  minienv-swarm-runner:
+    image: minienv/minienv-swarm-runner:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "$internalLogPort"
+      - "$internalEditorPort"
+      - "$internalProxyPort"
+    environment:
+      - COMPOSE_HTTP_TIMEOUT=${COMPOSE_HTTP_TIMEOUT}
+      - MINIENV_ALLOW_ORIGIN=$allowOrigin
+      - MINIENV_INTERNAL_LOG_PORT=$internalLogPort
+      - MINIENV_INTERNAL_EDITOR_PORT=$internalEditorPort
+      - MINIENV_INTERNAL_PROXY_PORT=$internalProxyPort
+      - MINIENV_EXTERNAL_LOG_PORT=$externalLogPort
+      - MINIENV_EXTERNAL_EDITOR_PORT=$externalEditorPort
+      - MINIENV_EXTERNAL_PROXY_PORT=$externalProxyPort
+      - MINIENV_GIT_REPO=$gitRepo

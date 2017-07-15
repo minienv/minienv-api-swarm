@@ -1,0 +1,14 @@
+version: '3'
+services:
+  minienv:
+    image: 127.0.0.1:5000/minienv/minienv-provisioner:latest
+    privileged: true
+    volumes:
+      - $volumeName:/var/lib/docker
+    environment:
+      - COMPOSE_HTTP_TIMEOUT=${COMPOSE_HTTP_TIMEOUT}
+      - MINIENV_VERSION=$minienvVersion
+      - MINIENV_PROVISION_IMAGES=$provisionImages
+volumes:
+  $volumeName:
+    external: true
